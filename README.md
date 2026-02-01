@@ -1,3 +1,5 @@
+<img src="./sdft.png" width="450px"></img>
+
 ## SDFT - Pytorch (wip)
 
 Explorations into the proposed SDFT, [Self-Distillation Enables Continual Learning](https://arxiv.org/abs/2601.19897), from Shenfeld et al. of MIT
