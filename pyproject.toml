@@ -15,6 +15,7 @@ authors = [
 dependencies = [
     "einops>=0.8.2",
     "ema-pytorch",
+    'Jinja2',
     "torch>=2.5",
     "torch-einops-utils>=0.0.3"
 ]
