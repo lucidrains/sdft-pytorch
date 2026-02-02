@@ -26,5 +26,10 @@ test = [
     "x-transformers"
 ]
 
+[tool.pytest.ini_options]
+pythonpath = [
+    "."
+]
+
 [tool.setuptools]
 packages = ["sdft_pytorch"]
