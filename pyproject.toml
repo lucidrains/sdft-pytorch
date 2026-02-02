@@ -21,7 +21,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = [
-    "pytest"
+    "pytest",
+    "x-transformers"
 ]
 
 [tool.setuptools]
