@@ -14,8 +14,9 @@ from torch_einops_utils import pad_sequence
 
 from ema_pytorch import EMA
 
-# default query / demonstration template for in-context learned distillation targets from teacher for student
+from x_transformers import TransformerWrapper
 
+# default query / demonstration template for in-context learned distillation targets from teacher for student
 
 DEFAULT_STUDENT_PROMPT_TEMPLATE = """
 [Instruction]
@@ -59,7 +60,7 @@ def maybe_cast_tensor(t):
 class SDFT(Module):
     def __init__(
         self,
-        model: Module,
+        model: TransformerWrapper,
         tokenizer_encode: Callable[[list[str]], list[Tensor]],
         student_prompt_template = DEFAULT_STUDENT_PROMPT_TEMPLATE,
         teacher_update_rate = 0.01,
@@ -106,7 +107,34 @@ class SDFT(Module):
         student_prompt_ids = [maybe_cast_tensor(encode(prompt)) for prompt in student_prompts_str]
         teacher_prompt_ids = [maybe_cast_tensor(encode(prompt)) for prompt in teacher_prompts_str]
 
-        student_prompt_ids, student_prompt_id_lens = pad_sequence(student_prompt_ids, return_lens = True, left = True, value = -1)
-        teacher_prompt_ids, teacher_prompt_id_lens = pad_sequence(teacher_prompt_ids, return_lens = True, left = True, value = -1)
+        student_prompt_ids, student_prompt_id_lens = pad_sequence(student_prompt_ids, return_lens = True, left = True)
+        teacher_prompt_ids, teacher_prompt_id_lens = pad_sequence(teacher_prompt_ids, return_lens = True, left = True)
 
-        return tensor(0.)
+        # get the start position from the left
+
+        max_len = student_prompt_ids.shape[-1]
+
+        student_seq_start_pos = max_len - student_prompt_id_lens
+        teacher_seq_start_pos = max_len - teacher_prompt_id_lens
+
+        # forward for first logit of student and teacher
+
+        student_logits, student_cache = self.student(student_prompt_ids, seq_start_pos = student_seq_start_pos, return_intermediates = True)
+        teacher_logits, teacher_cache = self.teacher(teacher_prompt_ids, seq_start_pos = teacher_seq_start_pos, return_intermediates = True)
+
+        student_token_logit = student_logits[:, -1:]
+        teacher_token_logit = teacher_logits[:, -1:]
+
+        student_token_log_probs = student_token_logit.log_softmax(dim = -1)
+        teacher_token_probs = teacher_token_logit.softmax(dim = -1)
+
+        # privileged self distillation via ICL
+
+        token_kl_div = F.kl_div(
+            student_token_log_probs,
+            teacher_token_probs,
+            reduction = 'none'
+
+        ).sum(dim = -1)
+
+        return token_kl_div.mean()
