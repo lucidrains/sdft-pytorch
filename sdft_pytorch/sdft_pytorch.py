@@ -120,7 +120,10 @@ class SDFT(Module):
         # forward for first logit of student and teacher
 
         student_logits, student_cache = self.student(student_prompt_ids, seq_start_pos = student_seq_start_pos, return_intermediates = True)
-        teacher_logits, teacher_cache = self.teacher(teacher_prompt_ids, seq_start_pos = teacher_seq_start_pos, return_intermediates = True)
+
+        with torch.no_grad():
+            self.teacher.eval()
+            teacher_logits, teacher_cache = self.teacher(teacher_prompt_ids, seq_start_pos = teacher_seq_start_pos, return_intermediates = True)
 
         student_token_logit = student_logits[:, -1:]
         teacher_token_logit = teacher_logits[:, -1:]

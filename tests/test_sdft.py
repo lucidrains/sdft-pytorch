@@ -30,3 +30,5 @@ def test_sdft():
         questions = ['12+48', '2*3'],
         answers = ['60', '6']
     )
+
+    loss.backward()
