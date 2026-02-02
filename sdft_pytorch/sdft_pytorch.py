@@ -107,15 +107,8 @@ class SDFT(Module):
         student_prompt_ids = [maybe_cast_tensor(encode(prompt)) for prompt in student_prompts_str]
         teacher_prompt_ids = [maybe_cast_tensor(encode(prompt)) for prompt in teacher_prompts_str]
 
-        student_prompt_ids, student_prompt_id_lens = pad_sequence(student_prompt_ids, return_lens = True, left = True)
-        teacher_prompt_ids, teacher_prompt_id_lens = pad_sequence(teacher_prompt_ids, return_lens = True, left = True)
-
-        # get the start position from the left
-
-        max_len = student_prompt_ids.shape[-1]
-
-        student_seq_start_pos = max_len - student_prompt_id_lens
-        teacher_seq_start_pos = max_len - teacher_prompt_id_lens
+        student_prompt_ids, student_seq_start_pos = pad_sequence(student_prompt_ids, return_lens = True, left = True, pad_lens = True)
+        teacher_prompt_ids, teacher_seq_start_pos = pad_sequence(teacher_prompt_ids, return_lens = True, left = True, pad_lens = True)
 
         # forward for first logit of student and teacher
 
