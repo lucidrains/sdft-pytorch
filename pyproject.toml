@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sdft-pytorch"
-version = "0.0.2"
+version = "0.0.3"
 description = "SDFT - Pytorch"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -24,7 +24,7 @@ dependencies = [
 [project.optional-dependencies]
 test = [
     "pytest",
-    "x-transformers"
+    "x-transformers>=2.15.2"
 ]
 
 [tool.pytest.ini_options]

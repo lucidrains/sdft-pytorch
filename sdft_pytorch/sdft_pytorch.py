@@ -79,6 +79,9 @@ class SDFT(Module):
     ):
         super().__init__()
 
+        if isinstance(model, TransformerWrapper):
+            model.input_not_include_cache = True
+
         self.student = model
 
         self.teacher = EMA(
