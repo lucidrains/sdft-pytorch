@@ -2,6 +2,7 @@ import pytest
 param = pytest.mark.parametrize
 
 import torch
+from torch.optim import Adam
 from sdft_pytorch.sdft_pytorch import SDFT
 
 @param('eos_id', (None, 1))
@@ -28,7 +29,6 @@ def test_sdft(
             for prompt in prompts
         ]
 
-
     sdft_wrapper = SDFT(
         model,
         student_max_response_len = 128,
@@ -42,4 +42,10 @@ def test_sdft(
         answers = ['60', '6']
     )
 
+    optim = Adam(sdft_wrapper.parameters(), lr = 3e-4)
+
     loss.backward()
+
+    optim.step()
+
+    sdft_wrapper.update_teacher_ema_()

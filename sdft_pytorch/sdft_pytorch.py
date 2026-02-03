@@ -118,6 +118,12 @@ class SDFT(Module):
 
         self.num_init_student_response_tokens_mask = num_init_student_response_tokens_mask
 
+    def parameters(self):
+        return self.student.parameters()
+
+    def update_teacher_ema_(self):
+        self.teacher.update()
+
     def forward(
         self,
         questions: list[str],
