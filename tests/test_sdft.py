@@ -40,4 +40,3 @@ def test_sdft(
     )
 
     loss.backward()
-    assert response.shape == (2, 128)

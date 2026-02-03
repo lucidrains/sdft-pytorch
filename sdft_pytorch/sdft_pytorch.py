@@ -196,6 +196,8 @@ class SDFT(Module):
             mask = ((student_responses == maybe_eos_id).cumsum(dim = -1) < 0)
             mask = F.pad(mask, (1, -1), value = True)
 
+            student_responses.masked_fill_(~mask, -1)
+
         # maybe masked mean for losses
 
         loss = masked_mean(token_kl_div_losses, mask)
