@@ -158,14 +158,14 @@ class SDFT(Module):
             student_token_logit = student_logits[:, -1:]
             teacher_token_logit = teacher_logits[:, -1:]
 
-            student_token_log_probs = student_token_logit.log_softmax(dim = -1)
-            teacher_token_probs = teacher_token_logit.softmax(dim = -1)
+            student_token_probs = student_token_logit.softmax(dim = -1)
+            teacher_token_log_probs = teacher_token_logit.log_softmax(dim = -1)
 
             # privileged self distillation via ICL
 
             token_kl_div = F.kl_div(
-                student_token_log_probs,
-                teacher_token_probs,
+                teacher_token_log_probs,
+                student_token_probs,
                 reduction = 'none'
 
             ).sum(dim = -1)
@@ -193,7 +193,8 @@ class SDFT(Module):
         mask = None
 
         if exists(maybe_eos_id):
-            mask = ((student_responses == maybe_eos_id).cumsum(dim = -1) < 0)
+            mask = (student_responses == maybe_eos_id).cumsum(dim = -1) == 0
+
             mask = F.pad(mask, (1, -1), value = True)
 
             student_responses.masked_fill_(~mask, -1)
