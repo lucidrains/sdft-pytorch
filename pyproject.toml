@@ -13,6 +13,7 @@ authors = [
     { name = "Phil Wang", email = "lucidrains@gmail.com" }
 ]
 dependencies = [
+    "discrete-continuous-embed-readout",
     "einops>=0.8.2",
     "ema-pytorch",
     'Jinja2',

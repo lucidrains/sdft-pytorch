@@ -1,12 +1,13 @@
 from __future__ import annotations
 from typing import Callable
+from collections import namedtuple
 
 from jinja2 import Template, Environment, meta
 
 import torch
 from torch.nn import Module
 import torch.nn.functional as F
-from torch import nn, is_tensor, tensor, Tensor
+from torch import nn, cat, stack, is_tensor, tensor, Tensor
 
 from einops import rearrange
 
@@ -15,6 +16,8 @@ from torch_einops_utils import pad_sequence
 from ema_pytorch import EMA
 
 from x_transformers import TransformerWrapper
+
+from discrete_continuous_embed_readout import Readout
 
 # default query / demonstration template for in-context learned distillation targets from teacher for student
 
@@ -57,11 +60,14 @@ def maybe_cast_tensor(t):
 
 # classes
 
+SDFTOutput = namedtuple('SDFTOutput', ('loss', 'response'))
+
 class SDFT(Module):
     def __init__(
         self,
         model: TransformerWrapper,
         tokenizer_encode: Callable[[list[str]], list[Tensor]],
+        student_max_response_len,
         student_prompt_template = DEFAULT_STUDENT_PROMPT_TEMPLATE,
         teacher_update_rate = 0.01,
         teacher_prompt_template = DEFAULT_TEACHER_PROMPT_TEMPLATE,
@@ -75,6 +81,12 @@ class SDFT(Module):
             beta = 1. - teacher_update_rate,
             include_online_model = False
         )
+
+        # sampling
+
+        self.student_max_response_len = student_max_response_len
+
+        self.discrete_readout = Readout(dim = 0, num_discrete = 1)
 
         # collection of prompts to list[Int['seq']]
 
@@ -91,7 +103,8 @@ class SDFT(Module):
     def forward(
         self,
         questions: list[str],
-        answers: list[str]
+        answers: list[str],
+        student_logit_sample_kwargs: dict = dict()
     ):
         encode = self.tokenizer_encode
         assert len(questions) == len(answers)
@@ -110,27 +123,56 @@ class SDFT(Module):
         student_prompt_ids, student_seq_start_pos = pad_sequence(student_prompt_ids, return_lens = True, left = True, pad_lens = True)
         teacher_prompt_ids, teacher_seq_start_pos = pad_sequence(teacher_prompt_ids, return_lens = True, left = True, pad_lens = True)
 
-        # forward for first logit of student and teacher
+        student_cache = None
+        teacher_cache = None
 
-        student_logits, student_cache = self.student(student_prompt_ids, seq_start_pos = student_seq_start_pos, return_intermediates = True)
+        # accumulate
 
-        with torch.no_grad():
-            self.teacher.eval()
-            teacher_logits, teacher_cache = self.teacher(teacher_prompt_ids, seq_start_pos = teacher_seq_start_pos, return_intermediates = True)
+        student_response = []
+        token_kl_div_losses = []
 
-        student_token_logit = student_logits[:, -1:]
-        teacher_token_logit = teacher_logits[:, -1:]
+        for _ in range(self.student_max_response_len):
 
-        student_token_log_probs = student_token_logit.log_softmax(dim = -1)
-        teacher_token_probs = teacher_token_logit.softmax(dim = -1)
+            # forward for logit of student and teacher
 
-        # privileged self distillation via ICL
+            student_logits, student_cache = self.student(student_prompt_ids, cache = student_cache, seq_start_pos = student_seq_start_pos, return_intermediates = True)
 
-        token_kl_div = F.kl_div(
-            student_token_log_probs,
-            teacher_token_probs,
-            reduction = 'none'
+            with torch.no_grad():
+                self.teacher.eval()
+                teacher_logits, teacher_cache = self.teacher(teacher_prompt_ids, cache = teacher_cache, seq_start_pos = teacher_seq_start_pos, return_intermediates = True)
 
-        ).sum(dim = -1)
+            student_token_logit = student_logits[:, -1:]
+            teacher_token_logit = teacher_logits[:, -1:]
 
-        return token_kl_div.mean()
+            student_token_log_probs = student_token_logit.log_softmax(dim = -1)
+            teacher_token_probs = teacher_token_logit.softmax(dim = -1)
+
+            # privileged self distillation via ICL
+
+            token_kl_div = F.kl_div(
+                student_token_log_probs,
+                teacher_token_probs,
+                reduction = 'none'
+
+            ).sum(dim = -1)
+
+            token_kl_div_losses.append(token_kl_div)
+
+            # sample
+
+            sampled_action = self.discrete_readout.sample(student_token_logit, **student_logit_sample_kwargs)
+            student_response.append(sampled_action)
+
+            # set student and teacher tokens to the next sampled token
+
+            student_prompt_ids = sampled_action
+            teacher_prompt_ids = sampled_action
+
+        # stack and return
+
+        student_response = cat(student_response, dim = 1)
+        token_kl_div_losses = cat(token_kl_div_losses, dim = 1)
+
+        loss = token_kl_div_losses.mean()
+
+        return SDFTOutput(loss, student_response)

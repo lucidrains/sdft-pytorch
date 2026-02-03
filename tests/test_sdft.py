@@ -23,12 +23,14 @@ def test_sdft():
 
     sdft_wrapper = SDFT(
         model,
+        student_max_response_len = 128,
         tokenizer_encode = tokenizer_encode,
     )
 
-    loss = sdft_wrapper(
+    loss, response = sdft_wrapper(
         questions = ['12+48', '2*3'],
         answers = ['60', '6']
     )
 
     loss.backward()
+    assert response.shape == (2, 128)
