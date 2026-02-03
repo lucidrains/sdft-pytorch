@@ -14,7 +14,8 @@ from einops import rearrange
 from torch_einops_utils import (
     pad_sequence,
     safe_cat,
-    masked_mean
+    masked_mean,
+    and_masks
 )
 
 from ema_pytorch import EMA
@@ -75,6 +76,7 @@ class SDFT(Module):
         student_prompt_template = DEFAULT_STUDENT_PROMPT_TEMPLATE,
         teacher_update_rate = 0.01,
         teacher_prompt_template = DEFAULT_TEACHER_PROMPT_TEMPLATE,
+        num_init_student_response_tokens_mask = 0,  # they mentioned some issue where the student starts repeating stuff in the prompt template, where they alleviate by masking out the loss for first few tokens
         eos_id = None, # if set, will mask out any losses after the first eos token id detected in a given sample
     ):
         super().__init__()
@@ -112,13 +114,17 @@ class SDFT(Module):
 
         self.eos_id = eos_id
 
+        # how many initial response tokens to exclude from reverse kl loss
+
+        self.num_init_student_response_tokens_mask = num_init_student_response_tokens_mask
+
     def forward(
         self,
         questions: list[str],
         answers: list[str],
         student_logit_sample_kwargs: dict = dict()
     ):
-        maybe_eos_id = self.eos_id
+        maybe_eos_id, response_prefix_mask = self.eos_id, self.num_init_student_response_tokens_mask
 
         encode = self.tokenizer_encode
         assert len(questions) == len(answers)
@@ -190,16 +196,26 @@ class SDFT(Module):
 
         # handle eos
 
-        mask = None
+        eos_mask = None
 
         if exists(maybe_eos_id):
-            mask = (student_responses == maybe_eos_id).cumsum(dim = -1) == 0
+            eos_mask = (student_responses == maybe_eos_id).cumsum(dim = -1) == 0
 
-            mask = F.pad(mask, (1, -1), value = True)
+            eos_mask = F.pad(eos_mask, (1, -1), value = True)
 
-            student_responses.masked_fill_(~mask, -1)
+            student_responses.masked_fill_(~eos_mask, -1)
+
+        # handle masking of first few response tokens
+
+        init_tokens_mask = None
+
+        if response_prefix_mask > 0:
+            init_tokens_mask = torch.ones_like(student_responses).bool()
+            init_tokens_mask[:, :response_prefix_mask] = False
 
         # maybe masked mean for losses
+
+        mask = and_masks([eos_mask, init_tokens_mask])
 
         loss = masked_mean(token_kl_div_losses, mask)
 
