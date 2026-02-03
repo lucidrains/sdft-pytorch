@@ -11,7 +11,11 @@ from torch import nn, cat, stack, is_tensor, tensor, Tensor
 
 from einops import rearrange
 
-from torch_einops_utils import pad_sequence
+from torch_einops_utils import (
+    pad_sequence,
+    safe_cat,
+    masked_mean
+)
 
 from ema_pytorch import EMA
 
@@ -71,6 +75,7 @@ class SDFT(Module):
         student_prompt_template = DEFAULT_STUDENT_PROMPT_TEMPLATE,
         teacher_update_rate = 0.01,
         teacher_prompt_template = DEFAULT_TEACHER_PROMPT_TEMPLATE,
+        eos_id = None, # if set, will mask out any losses after the first eos token id detected in a given sample
     ):
         super().__init__()
 
@@ -100,12 +105,18 @@ class SDFT(Module):
         assert get_variables_from_template(student_prompt_template) == {'question'}
         self.student_prompt_template = Template(student_prompt_template)
 
+        # end of string
+
+        self.eos_id = eos_id
+
     def forward(
         self,
         questions: list[str],
         answers: list[str],
         student_logit_sample_kwargs: dict = dict()
     ):
+        maybe_eos_id = self.eos_id
+
         encode = self.tokenizer_encode
         assert len(questions) == len(answers)
 
@@ -128,8 +139,8 @@ class SDFT(Module):
 
         # accumulate
 
-        student_response = []
-        token_kl_div_losses = []
+        student_responses = None
+        token_kl_div_losses = None
 
         for _ in range(self.student_max_response_len):
 
@@ -156,23 +167,34 @@ class SDFT(Module):
 
             ).sum(dim = -1)
 
-            token_kl_div_losses.append(token_kl_div)
+            token_kl_div_losses = safe_cat((token_kl_div_losses, token_kl_div), dim = 1)
 
             # sample
 
             sampled_action = self.discrete_readout.sample(student_token_logit, **student_logit_sample_kwargs)
-            student_response.append(sampled_action)
+
+            student_responses = safe_cat((student_responses, sampled_action), dim = 1)
+
+            # break if all eos
+
+            if exists(maybe_eos_id) and (student_responses == maybe_eos_id).any(dim = -1).all():
+                break
 
             # set student and teacher tokens to the next sampled token
 
             student_prompt_ids = sampled_action
             teacher_prompt_ids = sampled_action
 
-        # stack and return
+        # handle eos
 
-        student_response = cat(student_response, dim = 1)
-        token_kl_div_losses = cat(token_kl_div_losses, dim = 1)
+        mask = None
 
-        loss = token_kl_div_losses.mean()
+        if exists(maybe_eos_id):
+            mask = ((student_responses == maybe_eos_id).cumsum(dim = -1) < 0)
+            mask = F.pad(mask, (1, -1), value = True)
 
-        return SDFTOutput(loss, student_response)
+        # maybe masked mean for losses
+
+        loss = masked_mean(token_kl_div_losses, mask)
+
+        return SDFTOutput(loss, student_responses)

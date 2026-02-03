@@ -1,7 +1,13 @@
+import pytest
+param = pytest.mark.parametrize
+
 import torch
 from sdft_pytorch.sdft_pytorch import SDFT
 
-def test_sdft():
+@param('eos_id', (None, 1))
+def test_sdft(
+    eos_id
+):
     from torch import tensor
     from x_transformers import TransformerWrapper, Decoder
 
@@ -24,6 +30,7 @@ def test_sdft():
     sdft_wrapper = SDFT(
         model,
         student_max_response_len = 128,
+        eos_id = eos_id,
         tokenizer_encode = tokenizer_encode,
     )
 
