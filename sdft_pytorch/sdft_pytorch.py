@@ -130,7 +130,7 @@ class SDFT(Module):
         answers: list[str],
         student_logit_sample_kwargs: dict = dict()
     ):
-        maybe_eos_id, response_prefix_mask = self.eos_id, self.num_init_student_response_tokens_mask
+        maybe_eos_id, prefix_mask_len = self.eos_id, self.num_init_student_response_tokens_mask
 
         encode = self.tokenizer_encode
         assert len(questions) == len(answers)
@@ -215,9 +215,9 @@ class SDFT(Module):
 
         init_tokens_mask = None
 
-        if response_prefix_mask > 0:
+        if prefix_mask_len > 0:
             init_tokens_mask = torch.ones_like(student_responses).bool()
-            init_tokens_mask[:, :response_prefix_mask] = False
+            init_tokens_mask[:, :prefix_mask_len] = False
 
         # maybe masked mean for losses
 
