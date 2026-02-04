@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sdft-pytorch"
-version = "0.0.7"
+version = "0.0.8"
 description = "SDFT - Pytorch"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,7 @@ authors = [
     { name = "Phil Wang", email = "lucidrains@gmail.com" }
 ]
 dependencies = [
+    "accelerate",
     "discrete-continuous-embed-readout",
     "einops>=0.8.2",
     "ema-pytorch",

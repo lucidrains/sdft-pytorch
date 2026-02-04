@@ -5,9 +5,13 @@ from collections import namedtuple
 from jinja2 import Template, Environment, meta
 
 import torch
+from torch.optim import Adam
 from torch.nn import Module
 import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
 from torch import nn, cat, stack, is_tensor, tensor, Tensor
+
+from accelerate import Accelerator
 
 from einops import rearrange
 
@@ -226,3 +230,57 @@ class SDFT(Module):
         loss = masked_mean(token_kl_div_losses, mask)
 
         return SDFTOutput(loss, student_responses)
+
+# trainer
+
+class SDFTTrainer(Module):
+    def __init__(
+        self,
+        model: SDFT,
+        dataset: Dataset,
+        batch_size = 4,
+        grad_accum_steps = 1,
+        learning_rate = 2e-5,
+        max_grad_norm = 0.5,
+        accelerate_kwargs: dict = dict(),
+        optim_klass = Adam,
+        optim_kwargs: dict = dict()
+    ):
+        super().__init__()
+
+        self.accelerator = Accelerator(
+            gradient_accumulation_steps = grad_accum_steps,
+            **accelerate_kwargs
+        )
+
+        self.model = model
+
+        self.optimizer = optim_klass(model.parameters(), lr = learning_rate, **optim_kwargs)
+
+        self.dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = True)
+
+        self.model, self.optimizer, self.dataloader = self.accelerator.prepare(
+            self.model, self.optimizer, self.dataloader
+        )
+
+        self.max_grad_norm = max_grad_norm
+
+    def forward(self):
+        self.model.train()
+
+        for questions, answers in self.dataloader:
+            with self.accelerator.accumulate(self.model):
+                output = self.model(questions, answers)
+
+                self.accelerator.backward(output.loss)
+
+                if exists(self.max_grad_norm) and self.accelerator.sync_gradients:
+                    self.accelerator.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+
+                self.optimizer.step()
+                self.optimizer.zero_grad()
+
+                if self.accelerator.sync_gradients:
+                    self.model.update_teacher_ema_()
+
+        return output

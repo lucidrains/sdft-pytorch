@@ -49,3 +49,46 @@ def test_sdft(
     optim.step()
 
     sdft_wrapper.update_teacher_ema_()
+
+def test_trainer():
+    from torch.utils.data import Dataset
+    from x_transformers import TransformerWrapper, Decoder
+
+    class MockDataset(Dataset):
+        def __init__(self, length = 10):
+            self.length = length
+
+        def __len__(self):
+            return self.length
+
+        def __getitem__(self, idx):
+            return "question", "answer"
+
+    model = TransformerWrapper(
+        num_tokens = 256,
+        max_seq_len = 512,
+        attn_layers = Decoder(
+            dim = 512,
+            depth = 2
+        )
+    )
+
+    def tokenizer_encode(prompts):
+        return [torch.tensor([ord(c) for c in prompt]) for prompt in prompts]
+
+    sdft = SDFT(
+        model,
+        student_max_response_len = 16,
+        tokenizer_encode = tokenizer_encode,
+    )
+
+    from sdft_pytorch.sdft_pytorch import SDFTTrainer
+
+    trainer = SDFTTrainer(
+        sdft,
+        dataset = MockDataset(),
+        batch_size = 2,
+        accelerate_kwargs = dict(cpu = True)
+    )
+
+    trainer()
