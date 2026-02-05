@@ -76,18 +76,16 @@ def test_trainer():
     def tokenizer_encode(prompts):
         return [torch.tensor([ord(c) for c in prompt]) for prompt in prompts]
 
-    sdft = SDFT(
-        model,
-        student_max_response_len = 16,
-        tokenizer_encode = tokenizer_encode,
-    )
-
     from sdft_pytorch.sdft_pytorch import SDFTTrainer
 
     trainer = SDFTTrainer(
-        sdft,
+        model,
         dataset = MockDataset(),
+        tokenizer_encode = tokenizer_encode,
         batch_size = 2,
+        sdft_kwargs = dict(
+            student_max_response_len = 16
+        ),
         accelerate_kwargs = dict(cpu = True)
     )
 

@@ -236,12 +236,14 @@ class SDFT(Module):
 class SDFTTrainer(Module):
     def __init__(
         self,
-        model: SDFT,
+        model: Module,
         dataset: Dataset,
+        tokenizer_encode: Callable,
         batch_size = 4,
         grad_accum_steps = 1,
         learning_rate = 2e-5,
         max_grad_norm = 0.5,
+        sdft_kwargs: dict = dict(),
         accelerate_kwargs: dict = dict(),
         optim_klass = Adam,
         optim_kwargs: dict = dict()
@@ -253,9 +255,13 @@ class SDFTTrainer(Module):
             **accelerate_kwargs
         )
 
-        self.model = model
+        self.model = SDFT(
+            model,
+            tokenizer_encode = tokenizer_encode,
+            **sdft_kwargs
+        )
 
-        self.optimizer = optim_klass(model.parameters(), lr = learning_rate, **optim_kwargs)
+        self.optimizer = optim_klass(self.model.parameters(), lr = learning_rate, **optim_kwargs)
 
         self.dataloader = DataLoader(dataset, batch_size = batch_size, shuffle = True)
 
