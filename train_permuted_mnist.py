@@ -16,10 +16,15 @@ from torch import nn
 from torch.utils.data import DataLoader
 from torchvision import transforms, datasets
 from accelerate import Accelerator
-from einops import rearrange
+from einops import rearrange, repeat
 from tqdm import tqdm
 import fire
 from x_mlps_pytorch import MLP
+
+# helpers
+
+def exists(val):
+    return val is not None
 
 # simple fixed random permutation
 
@@ -44,17 +49,54 @@ class PermutedMNIST(datasets.MNIST):
             
         return image, label
 
+# model
+
+class PermutedMNISTModel(nn.Module):
+    def __init__(
+        self,
+        dim_in,
+        dim_hidden,
+        dim_out,
+        prob_add_permutation_cond = 0.5
+    ):
+        super().__init__()
+        self.vision_encoder = MLP(dim_in, dim_hidden, dim_hidden)
+        self.task_encoder = MLP(dim_in, dim_hidden, dim_hidden)
+        self.prediction_backbone = MLP(dim_hidden, dim_hidden, dim_out)
+        self.prob_add_permutation_cond = prob_add_permutation_cond
+
+    def sample(self):
+        return torch.rand(()) < self.prob_add_permutation_cond
+
+    def forward(self, x, perm, add_cond = None):
+        b, d = x.shape
+
+        h = self.vision_encoder(x)
+        
+        if not exists(add_cond):
+            add_cond = self.sample() if self.training else True
+            
+        if add_cond:
+            perm_input = perm.float() / d
+
+            if perm_input.ndim == 1:
+                perm_input = repeat(perm_input, 'd -> b d', b = b)
+            
+            h = h + self.task_encoder(perm_input)
+            
+        return self.prediction_backbone(h)
+
 # evaluation helper
 
 @torch.no_grad()
-def evaluate(model, dl, accelerator):
+def evaluate(model, dl, perm, accelerator):
     model.eval()
     correct = 0
     total = 0
     
     for images, labels in dl:
         images = rearrange(images, 'b c d -> b (c d)')
-        logits = model(images)
+        logits = model(images, perm = perm)
         preds = logits.argmax(dim = -1)
         
         preds, labels = accelerator.gather_for_metrics((preds, labels))
@@ -67,12 +109,13 @@ def evaluate(model, dl, accelerator):
 # main training function
 
 def train(
-    num_stages = 10,
+    num_stages = 5,
     epochs_per_stage = 1,
     batch_size = 64,
     lr = 1e-3,
     dim_hidden = 512,
-    base_seed = 42
+    base_seed = 42,
+    prob_add_permutation_cond = 0.5
 ):
     accelerator = Accelerator(
         log_with = "tensorboard",
@@ -83,7 +126,7 @@ def train(
     
     # model and optimizer
 
-    model = MLP(28 * 28, dim_hidden, dim_hidden, 10)
+    model = PermutedMNISTModel(28 * 28, dim_hidden, 10, prob_add_permutation_cond = prob_add_permutation_cond)
     optimizer = torch.optim.Adam(model.parameters(), lr = lr)
     
     # prepare model and optimizer once
@@ -102,6 +145,10 @@ def train(
         perm = get_permutation(seed = seed)
         all_perms.append(perm)
         
+        # move perm to device
+
+        perm_device = perm.to(accelerator.device)
+        
         # dataset and dataloader for training
 
         train_ds = PermutedMNIST('./data', train = True, download = True, permutation = perm)
@@ -118,7 +165,7 @@ def train(
             for images, labels in pbar:
                 images = rearrange(images, 'b c d -> b (c d)')
                 
-                logits = model(images)
+                logits = model(images, perm = perm_device)
                 loss = nn.functional.cross_entropy(logits, labels)
                 
                 accelerator.backward(loss)
@@ -136,7 +183,9 @@ def train(
             test_dl = DataLoader(test_ds, batch_size = batch_size, shuffle = False)
             test_dl = accelerator.prepare(test_dl)
             
-            accuracy = evaluate(model, test_dl, accelerator)
+            prev_perm_device = prev_perm.to(accelerator.device)
+            
+            accuracy = evaluate(model, test_dl, perm = prev_perm_device, accelerator = accelerator)
             accelerator.print(f'Accuracy Task {i}: {accuracy:.4f}')
             accelerator.log({f"accuracy/task_{i}": accuracy}, step = global_step)
 
